@@ -7,52 +7,52 @@
     <link rel="stylesheet" href="/assets/styles.css" />
   </head>
   <body>
-    <div class="bg-grid" aria-hidden="true"></div>
-    <main class="app">
-      <header class="topbar">
-        <div>
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand">
           <p class="eyebrow">EDGE AGENTIC RAG</p>
           <h1>Privacy Edge Jarvis</h1>
         </div>
-        <button id="metrics-btn" class="ghost">Refresh Metrics</button>
-      </header>
 
-      <section class="panels">
-        <section class="chat-panel card">
-          <div id="chat-log" class="chat-log"></div>
-          <form id="upload-form" class="upload-form">
-            <input id="file-input" type="file" multiple />
-            <button type="submit" class="ghost">Upload & Reindex</button>
-          </form>
-          <form id="chat-form" class="chat-form">
-            <input id="chat-input" placeholder="Ask anything. Try: latest AI safety news" required />
-            <button type="submit">Send</button>
-          </form>
+        <button id="metrics-btn" class="btn secondary">Refresh Status</button>
+
+        <form id="upload-form" class="upload-box">
+          <label for="file-input">Knowledge Upload</label>
+          <input id="file-input" type="file" multiple />
+          <button type="submit" class="btn">Upload & Reindex</button>
+        </form>
+
+        <section class="panel">
+          <h2>LLM + Index Status</h2>
+          <div id="system-status" class="stack"></div>
         </section>
 
-        <aside class="side">
-          <section class="card side-card">
+        <section class="panel">
+          <h2>Runtime Metrics</h2>
+          <div id="metrics" class="stack"></div>
+        </section>
+      </aside>
+
+      <main class="chat-main">
+        <section id="chat-log" class="chat-log"></section>
+
+        <section class="inspector">
+          <article class="panel">
             <h2>Tool Timeline</h2>
             <div id="tool-trace" class="stack"></div>
-          </section>
-
-          <section class="card side-card">
+          </article>
+          <article class="panel">
             <h2>Citations</h2>
             <div id="citations" class="stack"></div>
-          </section>
+          </article>
+        </section>
 
-          <section class="card side-card">
-            <h2>Runtime Metrics</h2>
-            <div id="metrics" class="stack"></div>
-          </section>
-
-          <section class="card side-card">
-            <h2>LLM + Index Status</h2>
-            <div id="system-status" class="stack"></div>
-          </section>
-        </aside>
-      </section>
-    </main>
+        <form id="chat-form" class="composer">
+          <input id="chat-input" placeholder="Ask with context or tools: latest LLM eval news" required />
+          <button type="submit" class="btn">Send</button>
+        </form>
+      </main>
+    </div>
 
     <template id="msg-template">
       <article class="msg">

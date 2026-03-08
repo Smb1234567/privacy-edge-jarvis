@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import os
 from typing import Any
+from typing import Generator
 
 import requests
 
@@ -60,3 +62,43 @@ def generate_with_ollama(prompt: str, system: str | None = None, timeout_s: int 
             "Ollama unavailable. Returning context-grounded fallback response.",
             {"provider": "ollama", "model": OLLAMA_MODEL, "status": "error", "error": str(exc)},
         )
+
+
+def stream_with_ollama(
+    prompt: str,
+    system: str | None = None,
+    timeout_s: int = 90,
+) -> Generator[dict[str, Any], None, None]:
+    payload: dict[str, Any] = {
+        "model": OLLAMA_MODEL,
+        "prompt": prompt,
+        "stream": True,
+        "keep_alive": "30m",
+        "options": {
+            "temperature": 0.2,
+            "num_predict": 220,
+        },
+    }
+    if system:
+        payload["system"] = system
+
+    try:
+        with requests.post(
+            f"{OLLAMA_URL}/api/generate",
+            json=payload,
+            timeout=timeout_s,
+            stream=True,
+        ) as res:
+            res.raise_for_status()
+            for line in res.iter_lines(decode_unicode=True):
+                if not line:
+                    continue
+                obj = json.loads(line)
+                token = obj.get("response", "")
+                if token:
+                    yield {"type": "token", "token": token}
+                if obj.get("done"):
+                    yield {"type": "done_meta", "raw": obj}
+                    break
+    except Exception as exc:  # noqa: BLE001
+        yield {"type": "error", "error": str(exc)}

@@ -10,14 +10,16 @@ const systemStatus = document.getElementById("system-status");
 const metricsBtn = document.getElementById("metrics-btn");
 const template = document.getElementById("msg-template");
 
-function addMessage(role, content) {
+function createMessage(role, content = "") {
   const node = template.content.cloneNode(true);
   node.querySelector(".role").textContent = role;
   node.querySelector(".content").textContent = content;
   const msg = node.querySelector(".msg");
   if (role === "Assistant") msg.classList.add("assistant");
+  const contentEl = node.querySelector(".content");
   chatLog.appendChild(node);
   chatLog.scrollTop = chatLog.scrollHeight;
+  return contentEl;
 }
 
 function renderStack(container, items, emptyText) {
@@ -58,30 +60,69 @@ async function refreshSystemStatus() {
   }
 }
 
+async function runStreamingChat(query) {
+  const assistantContent = createMessage("Assistant", "Thinking...");
+  let text = "";
+
+  const res = await fetch("/api/chat/stream", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query }),
+  });
+
+  if (!res.ok || !res.body) {
+    throw new Error(`HTTP ${res.status}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    let idx = buffer.indexOf("\n");
+    while (idx >= 0) {
+      const line = buffer.slice(0, idx).trim();
+      buffer = buffer.slice(idx + 1);
+      idx = buffer.indexOf("\n");
+      if (!line) continue;
+
+      const event = JSON.parse(line);
+      if (event.type === "meta") {
+        renderStack(toolTrace, event.tool_trace, "No tools called");
+        renderStack(citations, event.citations, "No citations returned");
+      }
+
+      if (event.type === "token") {
+        text += event.token;
+        assistantContent.textContent = text;
+        chatLog.scrollTop = chatLog.scrollHeight;
+      }
+
+      if (event.type === "done") {
+        assistantContent.textContent = `${text}\n\nLatency: ${event.latency_ms} ms\nLLM: ${event.llm.provider}/${event.llm.model} (${event.llm.status})`;
+      }
+    }
+  }
+}
+
 chatForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const query = chatInput.value.trim();
   if (!query) return;
 
-  addMessage("You", query);
+  createMessage("You", query);
   chatInput.value = "";
 
   try {
-    const res = await fetch("/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query }),
-    });
-
-    const data = await res.json();
-    const llmLabel = data.llm ? `${data.llm.provider}/${data.llm.model} (${data.llm.status})` : "unknown";
-    addMessage("Assistant", `${data.answer}\n\nLatency: ${data.latency_ms} ms\nLLM: ${llmLabel}`);
-    renderStack(toolTrace, data.tool_trace, "No tools called");
-    renderStack(citations, data.citations, "No citations returned");
+    await runStreamingChat(query);
     refreshMetrics();
     refreshSystemStatus();
   } catch (err) {
-    addMessage("Assistant", `Request failed: ${String(err)}`);
+    createMessage("Assistant", `Request failed: ${String(err)}`);
   }
 });
 
@@ -89,7 +130,7 @@ uploadForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const files = fileInput.files;
   if (!files || files.length === 0) {
-    addMessage("Assistant", "Choose one or more files before uploading.");
+    createMessage("Assistant", "Choose one or more files before uploading.");
     return;
   }
 
@@ -102,17 +143,19 @@ uploadForm.addEventListener("submit", async (e) => {
       body: form,
     });
     const data = await res.json();
-    addMessage("Assistant", `Upload complete. Indexed: ${JSON.stringify(data.indexed)}`);
+    createMessage("Assistant", `Upload complete. Indexed: ${JSON.stringify(data.indexed)}`);
     fileInput.value = "";
     refreshSystemStatus();
   } catch (err) {
-    addMessage("Assistant", `Upload failed: ${String(err)}`);
+    createMessage("Assistant", `Upload failed: ${String(err)}`);
   }
 });
 
-metricsBtn.addEventListener("click", refreshMetrics);
-metricsBtn.addEventListener("click", refreshSystemStatus);
+metricsBtn.addEventListener("click", () => {
+  refreshMetrics();
+  refreshSystemStatus();
+});
 
-addMessage("Assistant", "Ready. Use Upload & Reindex, then ask grounded questions.");
+createMessage("Assistant", "Ready. Upload docs, then chat with streaming responses and grounded citations.");
 refreshMetrics();
 refreshSystemStatus();

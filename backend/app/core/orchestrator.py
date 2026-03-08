@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import time
+from typing import Generator
 
-from .llm import generate_with_ollama
+from .llm import OLLAMA_MODEL, generate_with_ollama, stream_with_ollama
 from .rag import retrieve
 from .tools import maybe_use_tools
 
@@ -80,4 +81,64 @@ def run_query(query: str) -> dict:
         "tool_trace": tool_trace,
         "llm": llm_meta,
         "latency_ms": elapsed_ms,
+    }
+
+
+def stream_query(query: str) -> Generator[dict, None, None]:
+    start = time.perf_counter()
+    retrieved = retrieve(query=query, top_k=4)
+    tool_trace, tool_outputs = maybe_use_tools(query)
+    citations = [
+        {
+            "source": item["source"],
+            "chunk_id": item["chunk_id"],
+            "score": item["score"],
+        }
+        for item in retrieved
+    ]
+
+    yield {
+        "type": "meta",
+        "tool_trace": tool_trace,
+        "citations": citations,
+        "llm": {"provider": "ollama", "model": OLLAMA_MODEL, "status": "starting"},
+    }
+
+    if _is_greeting(query) and not retrieved:
+        answer = "Hello. Upload some documents and I will answer with grounded citations."
+        elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
+        yield {"type": "token", "token": answer}
+        yield {
+            "type": "done",
+            "answer": answer,
+            "latency_ms": elapsed_ms,
+            "llm": {"provider": "ollama", "model": OLLAMA_MODEL, "status": "skipped_greeting_fastpath"},
+        }
+        return
+
+    prompt = _compose_prompt(query=query, retrieved=retrieved, tool_outputs=tool_outputs)
+    answer_parts: list[str] = []
+
+    for event in stream_with_ollama(prompt=prompt, system=SYSTEM_PROMPT):
+        if event["type"] == "token":
+            token = event["token"]
+            answer_parts.append(token)
+            yield {"type": "token", "token": token}
+        elif event["type"] == "error":
+            fallback = "Ollama unavailable. Please run `ollama serve` and ensure model `qwen3.5:4b` is pulled."
+            answer_parts.append(fallback)
+            yield {"type": "token", "token": fallback}
+            break
+
+    answer = "".join(answer_parts).strip()
+    if not answer and retrieved:
+        answer = "Fallback answer from local context: " + " ".join(c["text"][:140] for c in retrieved[:2])
+        yield {"type": "token", "token": answer}
+
+    elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
+    yield {
+        "type": "done",
+        "answer": answer,
+        "latency_ms": elapsed_ms,
+        "llm": {"provider": "ollama", "model": OLLAMA_MODEL, "status": "ok"},
     }

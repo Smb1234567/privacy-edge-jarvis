@@ -13,6 +13,7 @@ uvicorn app.main:app --reload --port 8000
 - `GET /api/health`
 - `GET /api/status` (Ollama model + index status)
 - `POST /api/chat`
+- `POST /api/chat/stream` (NDJSON streaming tokens)
 - `POST /api/ingest`
 - `POST /api/ingest/reindex`
 - `GET /api/tools`

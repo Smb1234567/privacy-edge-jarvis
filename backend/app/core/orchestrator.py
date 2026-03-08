@@ -1,96 +1,189 @@
 from __future__ import annotations
 
+import json
+import re
+import subprocess
 import time
-from typing import Generator
+from pathlib import Path
+from typing import Generator, Any
 
 from .llm import OLLAMA_MODEL, generate_with_ollama, stream_with_ollama
 from .rag import retrieve
 from .tools import maybe_use_tools
 
 
-SYSTEM_PROMPT = (
-    "You are a privacy-first local assistant. Prefer retrieved local context, "
-    "then tool outputs, and be explicit when information is uncertain. "
-    "If the user asks to analyze provided docs, produce a short structured summary."
-)
+SYSTEM_PROMPT = """You are Jarvis, an autonomous AI assistant running locally on the user's machine.
+
+You are helpful, friendly, and conversational. You have access to various tools to help answer questions.
+
+You can use these tools:
+- read_file(path) - Read file contents
+- list_directory(path) - List files in a directory  
+- search_files(directory, pattern) - Find files by name
+- grep_search(directory, query) - Search file contents
+- run_command(command) - Execute shell commands
+- get_system_info() - Get CPU, RAM, disk info
+- web_search(query) - Search the web
+- query_knowledge_base(query) - Query local documents
+
+Guidelines:
+- Be concise and conversational
+- Use tools when needed to provide accurate information
+- After using a tool, summarize the results for the user
+- Don't output JSON, just respond naturally
+"""
+
+
+TOOL_FUNCTIONS = {
+    "get_system_info": lambda: _get_system_info(),
+    "get_jarvis_status": lambda: _get_jarvis_status(),
+    "list_directory": lambda path: _list_directory(path),
+    "read_file": lambda path: _read_file(path),
+    "web_search": lambda query: _web_search(query),
+    "query_knowledge_base": lambda query: _query_knowledge_base(query),
+}
+
+
+def _get_system_info() -> str:
+    try:
+        import psutil
+        cpu = psutil.cpu_percent(interval=0.5)
+        mem = psutil.virtual_memory()
+        disk = psutil.disk_usage('/')
+        return f"CPU: {cpu}%, RAM: {mem.percent}% ({mem.used/(1024**3):.1f}GB used), Disk: {disk.percent}%"
+    except Exception as e:
+        return f"Error: {e}"
+
+
+def _get_jarvis_status() -> str:
+    try:
+        import requests
+        res = requests.get("http://127.0.0.1:8000/api/status", timeout=5)
+        data = res.json()
+        llm = data.get("llm", {})
+        index = data.get("index", {})
+        return f"LLM: {llm.get('model')} ({llm.get('status')}), Docs: {index.get('documents')}, Chunks: {index.get('chunks')}"
+    except Exception as e:
+        return f"Error: {e}"
+
+
+def _list_directory(path: str) -> str:
+    try:
+        p = Path(path).expanduser().resolve()
+        if not p.exists():
+            return f"Path not found: {path}"
+        items = [f"{'📁' if i.is_dir() else '📄'} {i.name}" for i in sorted(p.iterdir())[:20]]
+        return "\n".join(items) if items else "Empty"
+    except Exception as e:
+        return f"Error: {e}"
+
+
+def _read_file(path: str) -> str:
+    try:
+        p = Path(path).expanduser().resolve()
+        if not p.exists():
+            return f"File not found: {path}"
+        content = p.read_text()
+        if len(content) > 2000:
+            return content[:2000] + f"\n... ({len(content)} total chars)"
+        return content
+    except Exception as e:
+        return f"Error: {e}"
+
+
+def _web_search(query: str) -> str:
+    try:
+        from duckduckgo_search import DDGS
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=3))
+        if not results:
+            return "No results found"
+        output = []
+        for r in results:
+            output.append(f"- {r.get('title', 'No title')}: {r.get('href', '')}")
+        return "\n".join(output)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+def _query_knowledge_base(query: str) -> str:
+    try:
+        results = retrieve(query=query, top_k=3)
+        if not results:
+            return "No relevant documents found"
+        output = []
+        for r in results:
+            text = r.get("text", "")[:200]
+            source = r.get("source", "unknown").split("/")[-1]
+            output.append(f"- {source}: {text}...")
+        return "\n".join(output)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+def _extract_tool_call(text: str) -> tuple[str | None, dict | None]:
+    """Extract tool call from model output."""
+    patterns = [
+        r'\{[^{}]*"action"\s*:\s*"([^"]+)"[^{}]*"params"\s*:\s*(\{[^\}]+\})[^\}]*\}',
+        r'\{[^{}]*"tool"\s*:\s*"([^"]+)"[^{}]*\}',
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            try:
+                if len(match.groups()) >= 2:
+                    tool_name = match.group(1)
+                    params = json.loads(match.group(2))
+                    return tool_name, params
+                elif len(match.groups()) == 1:
+                    tool_name = match.group(1)
+                    return tool_name, {}
+            except:
+                pass
+    
+    return None, None
 
 
 def _is_greeting(query: str) -> bool:
     q = query.strip().lower()
-    return q in {"hi", "hello", "hey", "yo", "hola"}
-
-
-def _compose_prompt(query: str, retrieved: list[dict], tool_outputs: list[dict]) -> str:
-    context_blocks = []
-    for i, c in enumerate(retrieved, start=1):
-        context_blocks.append(
-            f"[CTX {i}] source={c['source']} chunk={c['chunk_id']} score={c['score']}\n{c['text']}"
-        )
-
-    tool_blocks = []
-    for t in tool_outputs:
-        tool_blocks.append(f"[TOOL {t['tool']}] {t.get('result')}")
-
-    context_text = "\n\n".join(context_blocks) if context_blocks else "No retrieved context"
-    tools_text = "\n".join(tool_blocks) if tool_blocks else "No tool outputs"
-
-    return (
-        f"User query:\n{query}\n\n"
-        f"Retrieved context:\n{context_text}\n\n"
-        f"Tool outputs:\n{tools_text}\n\n"
-        "Respond in this format:\n"
-        "1) Direct answer (2-5 lines)\n"
-        "2) Key points (3 bullets)\n"
-        "3) Confidence (high/medium/low)\n"
-        "Ground everything in the retrieved context/tool outputs. "
-        "If evidence is missing, say so."
-    )
-
-
-def _context_fallback_summary(query: str, retrieved: list[dict]) -> str:
-    if not retrieved:
-        return "I could not find relevant indexed context. Upload more documents and try again."
-    lines = [f"Local context summary for: {query}", ""]
-    for i, item in enumerate(retrieved[:3], start=1):
-        snippet = " ".join(item["text"].split())[:220]
-        lines.append(f"{i}. [{item['source']} | score={item['score']}] {snippet}...")
-    lines.append("")
-    lines.append("Confidence: medium (context-based fallback, model generation unavailable).")
-    return "\n".join(lines)
+    return q in {"hi", "hello", "hey", "yo", "hola", "howdy", "greetings", "sup"}
 
 
 def run_query(query: str) -> dict:
     start = time.perf_counter()
 
-    retrieved = retrieve(query=query, top_k=4)
-    tool_trace, tool_outputs = maybe_use_tools(query)
-
-    if _is_greeting(query) and not retrieved:
+    if _is_greeting(query):
         elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
         return {
-            "answer": "Hello. Upload some documents and I will answer with grounded citations.",
+            "answer": "Hey! I'm your local AI assistant. I can help you with your files, search the web, check system status, and answer questions about your documents. What would you like to do?",
             "citations": [],
-            "tool_trace": tool_trace,
-            "llm": {"provider": "ollama", "model": "qwen3.5:4b", "status": "skipped_greeting_fastpath"},
+            "tool_trace": [],
+            "llm": {"provider": "ollama", "model": OLLAMA_MODEL, "status": "ok"},
             "latency_ms": elapsed_ms,
         }
 
-    prompt = _compose_prompt(query=query, retrieved=retrieved, tool_outputs=tool_outputs)
+    tool_trace = []
+    tool_outputs = []
+    
+    retrieved = retrieve(query=query, top_k=3)
+    citations = [{"source": item["source"], "chunk_id": item["chunk_id"], "score": item["score"]} for item in retrieved]
+    
+    if retrieved:
+        context = "\n".join([f"[Document]: {c['text'][:500]}" for c in retrieved])
+    else:
+        context = "No relevant documents found."
+    
+    prompt = f"""User question: {query}
+
+Relevant context:
+{context}
+
+Provide a helpful, conversational answer based on the context above. If you need additional information, you can call a tool. Just respond naturally - don't output JSON."""
+
     answer, llm_meta = generate_with_ollama(prompt=prompt, system=SYSTEM_PROMPT)
 
     elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
-    citations = [
-        {
-            "source": item["source"],
-            "chunk_id": item["chunk_id"],
-            "score": item["score"],
-        }
-        for item in retrieved
-    ]
-
-    if llm_meta.get("status") != "ok" and retrieved:
-        preview = " ".join(c["text"][:140] for c in retrieved[:2])
-        answer = f"Fallback answer from local context: {preview}"
 
     return {
         "answer": answer,
@@ -103,17 +196,25 @@ def run_query(query: str) -> dict:
 
 def stream_query(query: str) -> Generator[dict, None, None]:
     start = time.perf_counter()
-    retrieved = retrieve(query=query, top_k=4)
-    tool_trace, tool_outputs = maybe_use_tools(query)
-    citations = [
-        {
-            "source": item["source"],
-            "chunk_id": item["chunk_id"],
-            "score": item["score"],
+    
+    if _is_greeting(query):
+        answer = "Hey! I'm your local AI assistant. I can help you with your files, search the web, check system status, and answer questions about your documents. What would you like to do?"
+        elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
+        yield {"type": "token", "token": answer}
+        yield {
+            "type": "done",
+            "answer": answer,
+            "latency_ms": elapsed_ms,
+            "llm": {"provider": "ollama", "model": OLLAMA_MODEL, "status": "ok"},
         }
-        for item in retrieved
-    ]
+        return
 
+    tool_trace = []
+    tool_outputs = []
+    
+    retrieved = retrieve(query=query, top_k=3)
+    citations = [{"source": item["source"], "chunk_id": item["chunk_id"], "score": item["score"]} for item in retrieved]
+    
     yield {
         "type": "meta",
         "tool_trace": tool_trace,
@@ -121,20 +222,19 @@ def stream_query(query: str) -> Generator[dict, None, None]:
         "llm": {"provider": "ollama", "model": OLLAMA_MODEL, "status": "starting"},
     }
 
-    if _is_greeting(query) and not retrieved:
-        answer = "Hello. Upload some documents and I will answer with grounded citations."
-        elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
-        yield {"type": "token", "token": answer}
-        yield {
-            "type": "done",
-            "answer": answer,
-            "latency_ms": elapsed_ms,
-            "llm": {"provider": "ollama", "model": OLLAMA_MODEL, "status": "skipped_greeting_fastpath"},
-        }
-        return
+    if retrieved:
+        context = "\n".join([f"[Document]: {c['text'][:500]}" for c in retrieved])
+    else:
+        context = "No relevant documents found."
+    
+    prompt = f"""User question: {query}
 
-    prompt = _compose_prompt(query=query, retrieved=retrieved, tool_outputs=tool_outputs)
-    answer_parts: list[str] = []
+Relevant context:
+{context}
+
+Provide a helpful, conversational answer based on the context above. Be concise and natural."""
+
+    answer_parts = []
     llm_status = "ok"
 
     for event in stream_with_ollama(prompt=prompt, system=SYSTEM_PROMPT):
@@ -144,16 +244,13 @@ def stream_query(query: str) -> Generator[dict, None, None]:
             yield {"type": "token", "token": token}
         elif event["type"] == "error":
             llm_status = "error"
-            fallback = _context_fallback_summary(query, retrieved)
-            answer_parts.append(fallback)
-            yield {"type": "token", "token": fallback}
+            answer_parts.append(f"Error: {event.get('error', 'Unknown error')}")
+            yield {"type": "token", "token": answer_parts[-1]}
             break
 
     answer = "".join(answer_parts).strip()
-    if not answer and retrieved:
-        llm_status = "fallback_context_only"
-        answer = _context_fallback_summary(query, retrieved)
-        yield {"type": "token", "token": answer}
+    if not answer:
+        answer = "I wasn't able to generate a response. Could you try rephrasing?"
 
     elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
     yield {

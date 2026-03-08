@@ -14,3 +14,6 @@ sqlalchemy==2.0.35
 psutil==6.0.0
 requests==2.32.3
 pytest==8.3.3
+rich==13.9.4
+prompt_toolkit==3.0.48
+httpx==0.28.1

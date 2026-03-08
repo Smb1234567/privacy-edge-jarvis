@@ -8,7 +8,7 @@ from typing import Generator
 import requests
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3.5:4b")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma3:4b")
 
 
 def ollama_status(timeout_s: int = 8) -> dict[str, Any]:
@@ -43,6 +43,7 @@ def generate_with_ollama(prompt: str, system: str | None = None, timeout_s: int 
         "options": {
             "temperature": 0.2,
             "num_predict": 220,
+            "think": False,
         },
     }
     if system:
@@ -77,6 +78,7 @@ def stream_with_ollama(
         "options": {
             "temperature": 0.2,
             "num_predict": 220,
+            "think": False,
         },
     }
     if system:

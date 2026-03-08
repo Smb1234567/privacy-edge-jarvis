@@ -1,0 +1,19 @@
+project_name: privacy-edge-jarvis
+llm:
+  provider: ollama
+  model: qwen3.5:4b
+retrieval:
+  embed_model: BAAI/bge-small-en-v1.5
+  top_k: 4
+  chunk_size: 600
+  chunk_overlap: 100
+tools:
+  - local_file_search
+  - duckduckgo_web_search
+  - sqlite_query
+  - calculator
+orchestration:
+  multi_hop: true
+constraints:
+  max_docs: 100
+  offline_first: true

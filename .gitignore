@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+.pytest_cache/
+
+# Node
+node_modules/
+.next/
+
+# Data/artifacts
+.env
+.env.*
+*.sqlite
+*.db
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+data/index/*
+!data/index/.gitkeep
+benchmarks/results/
+
+# Editors
+.vscode/
+.idea/

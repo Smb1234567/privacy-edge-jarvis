@@ -16,47 +16,84 @@ function createMessage(role, content = "") {
   node.querySelector(".content").textContent = content;
   const msg = node.querySelector(".msg");
   if (role === "Assistant") msg.classList.add("assistant");
+  if (role === "You") msg.classList.add("user");
   const contentEl = node.querySelector(".content");
   chatLog.appendChild(node);
   chatLog.scrollTop = chatLog.scrollHeight;
   return contentEl;
 }
 
-function renderStack(container, items, emptyText) {
+function setEmpty(container, text) {
   container.innerHTML = "";
-  if (!items || items.length === 0) {
-    const p = document.createElement("p");
-    p.className = "muted";
-    p.textContent = emptyText;
-    container.appendChild(p);
-    return;
-  }
+  const p = document.createElement("p");
+  p.className = "muted";
+  p.textContent = text;
+  container.appendChild(p);
+}
 
-  for (const item of items) {
-    const block = document.createElement("div");
-    block.className = "trace-item";
-    block.textContent = JSON.stringify(item, null, 2);
-    container.appendChild(block);
+function card(label, value, tone = "") {
+  const el = document.createElement("div");
+  el.className = `kv ${tone}`.trim();
+  el.innerHTML = `<p class="k">${label}</p><p class="v">${value}</p>`;
+  return el;
+}
+
+function renderToolTrace(items) {
+  toolTrace.innerHTML = "";
+  if (!items || items.length === 0) return setEmpty(toolTrace, "No tools called yet");
+  for (const t of items) {
+    const hitText = t.hits !== undefined ? `${t.hits} hits` : t.rows !== undefined ? `${t.rows} rows` : "";
+    const tone = t.status === "ok" ? "ok" : "warn";
+    toolTrace.appendChild(card(`${t.tool}`, `${t.status}${hitText ? ` • ${hitText}` : ""}`, tone));
   }
+}
+
+function renderCitations(items) {
+  citations.innerHTML = "";
+  if (!items || items.length === 0) return setEmpty(citations, "No citations yet");
+  for (const c of items) {
+    const source = c.source.split("/").slice(-1)[0];
+    citations.appendChild(card(`${source} • ${c.chunk_id}`, `score ${c.score}`));
+  }
+}
+
+function renderMetrics(data) {
+  metrics.innerHTML = "";
+  if (!data) return setEmpty(metrics, "No metrics yet");
+  metrics.appendChild(card("Process RSS", `${data.process_rss_mb} MB`));
+  metrics.appendChild(card("CPU", `${data.cpu_percent}%`));
+  metrics.appendChild(card("RAM", `${data.ram_percent}%`));
+}
+
+function renderStatus(data) {
+  systemStatus.innerHTML = "";
+  if (!data || !data.llm || !data.index) return setEmpty(systemStatus, "No status yet");
+
+  const llmTone = data.llm.status === "ok" ? "ok" : "warn";
+  const docs = data.index.documents ?? 0;
+  const chunks = data.index.chunks ?? 0;
+
+  systemStatus.appendChild(card("Model", `${data.llm.model}`, llmTone));
+  systemStatus.appendChild(card("LLM Status", `${data.llm.status}`, llmTone));
+  systemStatus.appendChild(card("Indexed Docs", `${docs}`));
+  systemStatus.appendChild(card("Indexed Chunks", `${chunks}`));
 }
 
 async function refreshMetrics() {
   try {
     const res = await fetch("/api/benchmark/metrics");
-    const data = await res.json();
-    renderStack(metrics, [data], "No metrics yet");
-  } catch (err) {
-    renderStack(metrics, [{ error: String(err) }], "No metrics yet");
+    renderMetrics(await res.json());
+  } catch {
+    setEmpty(metrics, "Metrics unavailable");
   }
 }
 
 async function refreshSystemStatus() {
   try {
     const res = await fetch("/api/status");
-    const data = await res.json();
-    renderStack(systemStatus, [data], "No status yet");
-  } catch (err) {
-    renderStack(systemStatus, [{ error: String(err) }], "No status yet");
+    renderStatus(await res.json());
+  } catch {
+    setEmpty(systemStatus, "Status unavailable");
   }
 }
 
@@ -70,9 +107,7 @@ async function runStreamingChat(query) {
     body: JSON.stringify({ query }),
   });
 
-  if (!res.ok || !res.body) {
-    throw new Error(`HTTP ${res.status}`);
-  }
+  if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -92,18 +127,16 @@ async function runStreamingChat(query) {
 
       const event = JSON.parse(line);
       if (event.type === "meta") {
-        renderStack(toolTrace, event.tool_trace, "No tools called");
-        renderStack(citations, event.citations, "No citations returned");
+        renderToolTrace(event.tool_trace);
+        renderCitations(event.citations);
       }
-
       if (event.type === "token") {
         text += event.token;
         assistantContent.textContent = text;
         chatLog.scrollTop = chatLog.scrollHeight;
       }
-
       if (event.type === "done") {
-        assistantContent.textContent = `${text}\n\nLatency: ${event.latency_ms} ms\nLLM: ${event.llm.provider}/${event.llm.model} (${event.llm.status})`;
+        assistantContent.textContent = `${text}\n\n${event.latency_ms} ms • ${event.llm.provider}/${event.llm.model} (${event.llm.status})`;
       }
     }
   }
@@ -116,6 +149,7 @@ chatForm.addEventListener("submit", async (e) => {
 
   createMessage("You", query);
   chatInput.value = "";
+  chatInput.focus();
 
   try {
     await runStreamingChat(query);
@@ -130,7 +164,7 @@ uploadForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const files = fileInput.files;
   if (!files || files.length === 0) {
-    createMessage("Assistant", "Choose one or more files before uploading.");
+    createMessage("Assistant", "Select one or more files before upload.");
     return;
   }
 
@@ -138,12 +172,12 @@ uploadForm.addEventListener("submit", async (e) => {
   for (const f of files) form.append("files", f);
 
   try {
-    const res = await fetch("/api/ingest", {
-      method: "POST",
-      body: form,
-    });
+    const res = await fetch("/api/ingest", { method: "POST", body: form });
     const data = await res.json();
-    createMessage("Assistant", `Upload complete. Indexed: ${JSON.stringify(data.indexed)}`);
+    createMessage(
+      "Assistant",
+      `Upload complete. Documents: ${data.indexed.documents_indexed}, Chunks: ${data.indexed.chunks_indexed}.`
+    );
     fileInput.value = "";
     refreshSystemStatus();
   } catch (err) {
@@ -156,6 +190,8 @@ metricsBtn.addEventListener("click", () => {
   refreshSystemStatus();
 });
 
-createMessage("Assistant", "Ready. Upload docs, then chat with streaming responses and grounded citations.");
+createMessage("Assistant", "Ready. Upload docs on the left, then ask for analysis/summaries with citations.");
+setEmpty(toolTrace, "No tools called yet");
+setEmpty(citations, "No citations yet");
 refreshMetrics();
 refreshSystemStatus();

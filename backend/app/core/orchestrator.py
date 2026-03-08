@@ -10,7 +10,8 @@ from .tools import maybe_use_tools
 
 SYSTEM_PROMPT = (
     "You are a privacy-first local assistant. Prefer retrieved local context, "
-    "then tool outputs, and be explicit when information is uncertain."
+    "then tool outputs, and be explicit when information is uncertain. "
+    "If the user asks to analyze provided docs, produce a short structured summary."
 )
 
 
@@ -37,9 +38,25 @@ def _compose_prompt(query: str, retrieved: list[dict], tool_outputs: list[dict])
         f"User query:\n{query}\n\n"
         f"Retrieved context:\n{context_text}\n\n"
         f"Tool outputs:\n{tools_text}\n\n"
-        "Answer with concise reasoning grounded in the context/tool outputs. "
+        "Respond in this format:\n"
+        "1) Direct answer (2-5 lines)\n"
+        "2) Key points (3 bullets)\n"
+        "3) Confidence (high/medium/low)\n"
+        "Ground everything in the retrieved context/tool outputs. "
         "If evidence is missing, say so."
     )
+
+
+def _context_fallback_summary(query: str, retrieved: list[dict]) -> str:
+    if not retrieved:
+        return "I could not find relevant indexed context. Upload more documents and try again."
+    lines = [f"Local context summary for: {query}", ""]
+    for i, item in enumerate(retrieved[:3], start=1):
+        snippet = " ".join(item["text"].split())[:220]
+        lines.append(f"{i}. [{item['source']} | score={item['score']}] {snippet}...")
+    lines.append("")
+    lines.append("Confidence: medium (context-based fallback, model generation unavailable).")
+    return "\n".join(lines)
 
 
 def run_query(query: str) -> dict:
@@ -118,6 +135,7 @@ def stream_query(query: str) -> Generator[dict, None, None]:
 
     prompt = _compose_prompt(query=query, retrieved=retrieved, tool_outputs=tool_outputs)
     answer_parts: list[str] = []
+    llm_status = "ok"
 
     for event in stream_with_ollama(prompt=prompt, system=SYSTEM_PROMPT):
         if event["type"] == "token":
@@ -125,14 +143,16 @@ def stream_query(query: str) -> Generator[dict, None, None]:
             answer_parts.append(token)
             yield {"type": "token", "token": token}
         elif event["type"] == "error":
-            fallback = "Ollama unavailable. Please run `ollama serve` and ensure model `qwen3.5:4b` is pulled."
+            llm_status = "error"
+            fallback = _context_fallback_summary(query, retrieved)
             answer_parts.append(fallback)
             yield {"type": "token", "token": fallback}
             break
 
     answer = "".join(answer_parts).strip()
     if not answer and retrieved:
-        answer = "Fallback answer from local context: " + " ".join(c["text"][:140] for c in retrieved[:2])
+        llm_status = "fallback_context_only"
+        answer = _context_fallback_summary(query, retrieved)
         yield {"type": "token", "token": answer}
 
     elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
@@ -140,5 +160,5 @@ def stream_query(query: str) -> Generator[dict, None, None]:
         "type": "done",
         "answer": answer,
         "latency_ms": elapsed_ms,
-        "llm": {"provider": "ollama", "model": OLLAMA_MODEL, "status": "ok"},
+        "llm": {"provider": "ollama", "model": OLLAMA_MODEL, "status": llm_status},
     }

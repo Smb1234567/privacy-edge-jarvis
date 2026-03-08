@@ -93,7 +93,10 @@ def stream_with_ollama(
             for line in res.iter_lines(decode_unicode=True):
                 if not line:
                     continue
-                obj = json.loads(line)
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
                 token = obj.get("response", "")
                 if token:
                     yield {"type": "token", "token": token}

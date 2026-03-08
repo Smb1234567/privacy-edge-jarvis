@@ -1,9 +1,12 @@
 const chatLog = document.getElementById("chat-log");
 const chatForm = document.getElementById("chat-form");
 const chatInput = document.getElementById("chat-input");
+const uploadForm = document.getElementById("upload-form");
+const fileInput = document.getElementById("file-input");
 const toolTrace = document.getElementById("tool-trace");
 const citations = document.getElementById("citations");
 const metrics = document.getElementById("metrics");
+const systemStatus = document.getElementById("system-status");
 const metricsBtn = document.getElementById("metrics-btn");
 const template = document.getElementById("msg-template");
 
@@ -45,6 +48,16 @@ async function refreshMetrics() {
   }
 }
 
+async function refreshSystemStatus() {
+  try {
+    const res = await fetch("/api/status");
+    const data = await res.json();
+    renderStack(systemStatus, [data], "No status yet");
+  } catch (err) {
+    renderStack(systemStatus, [{ error: String(err) }], "No status yet");
+  }
+}
+
 chatForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const query = chatInput.value.trim();
@@ -61,16 +74,45 @@ chatForm.addEventListener("submit", async (e) => {
     });
 
     const data = await res.json();
-    addMessage("Assistant", `${data.answer}\n\nLatency: ${data.latency_ms} ms`);
+    const llmLabel = data.llm ? `${data.llm.provider}/${data.llm.model} (${data.llm.status})` : "unknown";
+    addMessage("Assistant", `${data.answer}\n\nLatency: ${data.latency_ms} ms\nLLM: ${llmLabel}`);
     renderStack(toolTrace, data.tool_trace, "No tools called");
     renderStack(citations, data.citations, "No citations returned");
     refreshMetrics();
+    refreshSystemStatus();
   } catch (err) {
     addMessage("Assistant", `Request failed: ${String(err)}`);
   }
 });
 
-metricsBtn.addEventListener("click", refreshMetrics);
+uploadForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const files = fileInput.files;
+  if (!files || files.length === 0) {
+    addMessage("Assistant", "Choose one or more files before uploading.");
+    return;
+  }
 
-addMessage("Assistant", "Ready. Upload documents via /api/ingest, then ask grounded questions.");
+  const form = new FormData();
+  for (const f of files) form.append("files", f);
+
+  try {
+    const res = await fetch("/api/ingest", {
+      method: "POST",
+      body: form,
+    });
+    const data = await res.json();
+    addMessage("Assistant", `Upload complete. Indexed: ${JSON.stringify(data.indexed)}`);
+    fileInput.value = "";
+    refreshSystemStatus();
+  } catch (err) {
+    addMessage("Assistant", `Upload failed: ${String(err)}`);
+  }
+});
+
+metricsBtn.addEventListener("click", refreshMetrics);
+metricsBtn.addEventListener("click", refreshSystemStatus);
+
+addMessage("Assistant", "Ready. Use Upload & Reindex, then ask grounded questions.");
 refreshMetrics();
+refreshSystemStatus();

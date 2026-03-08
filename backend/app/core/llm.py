@@ -9,13 +9,38 @@ OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3.5:4b")
 
 
-def generate_with_ollama(prompt: str, system: str | None = None, timeout_s: int = 120) -> tuple[str, dict[str, Any]]:
+def ollama_status(timeout_s: int = 8) -> dict[str, Any]:
+    try:
+        res = requests.get(f"{OLLAMA_URL}/api/tags", timeout=timeout_s)
+        res.raise_for_status()
+        data = res.json()
+        models = [m.get("name", "") for m in data.get("models", [])]
+        return {
+            "provider": "ollama",
+            "url": OLLAMA_URL,
+            "model": OLLAMA_MODEL,
+            "status": "ok" if any(OLLAMA_MODEL in m for m in models) else "model_missing",
+            "available_models": models,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "provider": "ollama",
+            "url": OLLAMA_URL,
+            "model": OLLAMA_MODEL,
+            "status": "unreachable",
+            "error": str(exc),
+        }
+
+
+def generate_with_ollama(prompt: str, system: str | None = None, timeout_s: int = 45) -> tuple[str, dict[str, Any]]:
     payload: dict[str, Any] = {
         "model": OLLAMA_MODEL,
         "prompt": prompt,
         "stream": False,
+        "keep_alive": "30m",
         "options": {
             "temperature": 0.2,
+            "num_predict": 220,
         },
     }
     if system:

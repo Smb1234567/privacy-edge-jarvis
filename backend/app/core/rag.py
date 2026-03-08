@@ -128,6 +128,17 @@ def load_chunks() -> list[dict]:
     return json.loads(CHUNKS_PATH.read_text(encoding="utf-8"))
 
 
+def index_status() -> dict:
+    chunks = load_chunks()
+    sources = sorted({c.get("source", "unknown") for c in chunks})
+    return {
+        "chunks": len(chunks),
+        "documents": len(sources),
+        "sources_preview": sources[:10],
+        "index_file": str(CHUNKS_PATH.relative_to(BASE_DIR)),
+    }
+
+
 def build_index(max_docs: int = 100) -> dict:
     docs = list(_iter_raw_docs())[:max_docs]
     all_chunks: list[dict] = []

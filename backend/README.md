@@ -11,6 +11,7 @@ uvicorn app.main:app --reload --port 8000
 
 ## Endpoints
 - `GET /api/health`
+- `GET /api/status` (Ollama model + index status)
 - `POST /api/chat`
 - `POST /api/ingest`
 - `POST /api/ingest/reindex`

@@ -20,6 +20,10 @@
       <section class="panels">
         <section class="chat-panel card">
           <div id="chat-log" class="chat-log"></div>
+          <form id="upload-form" class="upload-form">
+            <input id="file-input" type="file" multiple />
+            <button type="submit" class="ghost">Upload & Reindex</button>
+          </form>
           <form id="chat-form" class="chat-form">
             <input id="chat-input" placeholder="Ask anything. Try: latest AI safety news" required />
             <button type="submit">Send</button>
@@ -40,6 +44,11 @@
           <section class="card side-card">
             <h2>Runtime Metrics</h2>
             <div id="metrics" class="stack"></div>
+          </section>
+
+          <section class="card side-card">
+            <h2>LLM + Index Status</h2>
+            <div id="system-status" class="stack"></div>
           </section>
         </aside>
       </section>

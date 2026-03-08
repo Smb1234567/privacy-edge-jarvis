@@ -13,6 +13,11 @@ SYSTEM_PROMPT = (
 )
 
 
+def _is_greeting(query: str) -> bool:
+    q = query.strip().lower()
+    return q in {"hi", "hello", "hey", "yo", "hola"}
+
+
 def _compose_prompt(query: str, retrieved: list[dict], tool_outputs: list[dict]) -> str:
     context_blocks = []
     for i, c in enumerate(retrieved, start=1):
@@ -41,6 +46,16 @@ def run_query(query: str) -> dict:
 
     retrieved = retrieve(query=query, top_k=4)
     tool_trace, tool_outputs = maybe_use_tools(query)
+
+    if _is_greeting(query) and not retrieved:
+        elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
+        return {
+            "answer": "Hello. Upload some documents and I will answer with grounded citations.",
+            "citations": [],
+            "tool_trace": tool_trace,
+            "llm": {"provider": "ollama", "model": "qwen3.5:4b", "status": "skipped_greeting_fastpath"},
+            "latency_ms": elapsed_ms,
+        }
 
     prompt = _compose_prompt(query=query, retrieved=retrieved, tool_outputs=tool_outputs)
     answer, llm_meta = generate_with_ollama(prompt=prompt, system=SYSTEM_PROMPT)

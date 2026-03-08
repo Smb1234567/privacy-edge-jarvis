@@ -118,7 +118,14 @@ h1 {
   display: flex;
   gap: 10px;
   padding: 12px;
+}
+
+.upload-form {
+  display: flex;
+  gap: 10px;
+  padding: 12px;
   border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
 }
 
 input,
@@ -132,6 +139,11 @@ input {
   flex: 1;
   background: rgba(8, 14, 24, 0.78);
   padding: 12px;
+}
+
+input[type="file"] {
+  padding: 8px;
+  font-size: 12px;
 }
 
 button {

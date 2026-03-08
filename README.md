@@ -31,8 +31,8 @@ Build a local "Jarvis" assistant that can:
 
 ## Quick Start (MVP)
 1. Create python env and install backend deps.
-2. Start backend API.
-3. Start frontend UI.
+2. Start backend API (`uvicorn app.main:app --reload --port 8000` from `backend/`).
+3. Open frontend UI at `http://127.0.0.1:8000`.
 4. Load docs into index via ingestion endpoint.
 
 Detailed setup is in `docs/setup.md`.

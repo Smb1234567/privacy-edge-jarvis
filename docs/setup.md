@@ -1,10 +1,21 @@
 # Setup Guide
 
 ## 1) Backend
-Follow `backend/README.md`.
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+```
+
+Shortcut:
+```bash
+./scripts/run_backend.sh
+```
 
 ## 2) Frontend
-Phase 1 will add concrete install/run commands after scaffold.
+Open `http://127.0.0.1:8000` in your browser.
 
 ## 3) Local model
 - Ensure Ollama is running.

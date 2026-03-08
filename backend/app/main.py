@@ -1,5 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 
 from .routers import health, chat, ingest, tools, benchmark
 
@@ -19,6 +22,14 @@ def create_app() -> FastAPI:
     app.include_router(ingest.router, prefix="/api")
     app.include_router(tools.router, prefix="/api")
     app.include_router(benchmark.router, prefix="/api")
+
+    frontend_dir = Path(__file__).resolve().parents[2] / "frontend"
+    app.mount("/assets", StaticFiles(directory=frontend_dir / "assets"), name="assets")
+
+    @app.get("/", include_in_schema=False)
+    def serve_ui() -> FileResponse:
+        return FileResponse(frontend_dir / "index.html")
+
     return app
 
 

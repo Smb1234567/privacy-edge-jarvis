@@ -1,9 +1,14 @@
-# Frontend (Planned: Next.js + Tailwind + shadcn)
+# Frontend (MVP Live UI)
 
-MVP UI goals:
+The MVP frontend is a custom no-build static app served by FastAPI.
+
+Files:
+- `frontend/index.html`
+- `frontend/assets/styles.css`
+- `frontend/assets/app.js`
+
+UI includes:
 - Modern chat interface
 - Tool trace timeline panel
 - Citation panel
-- System metrics mini-dashboard
-
-Phase 1 implementation will scaffold Next.js app and connect to backend APIs.
+- Runtime metrics panel
